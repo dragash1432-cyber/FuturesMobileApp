@@ -1,9 +1,10 @@
-name: FuturesFlow Android APK (corrected)
+name: FuturesFlow Android APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -16,54 +17,71 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify project is at repository root
+      - name: Verify Android project structure
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           test -f "$GITHUB_WORKSPACE/settings.gradle.kts"
           test -f "$GITHUB_WORKSPACE/build.gradle.kts"
           test -f "$GITHUB_WORKSPACE/app/build.gradle.kts"
           grep -F 'include(":app")' "$GITHUB_WORKSPACE/settings.gradle.kts"
-          echo "Repository root: $GITHUB_WORKSPACE"
-          find "$GITHUB_WORKSPACE" -maxdepth 3 -type f | sort | head -200
+          echo "Project root verified: $GITHUB_WORKSPACE"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Install required Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          test -d "$SDK_ROOT"
+
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::Android SDK command-line tools were not found"
+            exit 1
+          fi
+
+          echo "Using sdkmanager: $SDKMANAGER"
+
+          set +o pipefail
+          yes | "$SDKMANAGER" --licenses
+          set -o pipefail
+
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: "8.9"
 
-      - name: Verify app module tasks
+      - name: Verify Gradle and Android module
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
+          gradle --version
           gradle --no-daemon -p "$GITHUB_WORKSPACE" :app:tasks --all
 
-      - name: Build debug APK from repository root
+      - name: Build debug APK
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           gradle --no-daemon --stacktrace -p "$GITHUB_WORKSPACE" :app:assembleDebug
 
       - name: Verify APK output
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           APK="$GITHUB_WORKSPACE/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           sha256sum "$APK"
